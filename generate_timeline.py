@@ -2,25 +2,25 @@
 """
 Tyrant Unleashed - History Timeline Generator
 ================================================
-Liest faction_war / raid / battle_event Events aus XML-Dateien,
-laedt die zugehoerigen web_picture-Bilder herunter und erzeugt
-eine einzelne, eigenstaendige HTML-Timeline-Seite.
+Reads faction_war / raid / battle_event events from XML files,
+downloads the referenced web_picture images, and generates
+a single, self-contained HTML timeline page.
 
-Nutzung:
+Usage:
     python3 generate_timeline.py
 
-Erwartet im selben Ordner (oder per --input angegeben):
+Expected in the same folder (or specified via --input):
     faction_wars_fp3.xml
     raids_x42.xml
     battle_events_h52.xml
 
-Ausgabe:
-    timeline.html            (eigenstaendige HTML-Datei)
-    images/<web_picture>      (heruntergeladene Bilder)
+Output:
+    timeline.html            (self-contained HTML file)
+    images/<web_picture>      (downloaded images)
 
-Falls ein Bild nicht heruntergeladen werden kann (404, kein Netzwerk,
-etc.), wird der Eintrag trotzdem angezeigt - mit einem Platzhalter statt
-Bild. Das Skript bricht dabei nicht ab.
+If an image can't be downloaded (404, no network, etc.), the entry is
+still shown - with a placeholder instead of the image. The script does
+not abort because of this.
 """
 
 import argparse
@@ -35,13 +35,13 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-# Manuelle Korrekturen fuer bekannte Datenfehler in den Quell-XMLs (falsche
-# start_time/end_time). Key = Name (exakt wie im XML, Gross-/Kleinschreibung
-# egal), Value = (start_time, end_time) als Unix-Timestamp.
-# "Insurrection Conquest": end_time lag im Original VOR start_time
-# (20.10.2017 - 23.08.2014) - korrigiert auf 20.10.2017 - 23.10.2017.
+# Manual corrections for known data errors in the source XMLs (wrong
+# start_time/end_time). Key = name (exactly as in the XML, case
+# insensitive), value = (start_time, end_time) as Unix timestamp.
+# "Insurrection Conquest": end_time was originally BEFORE start_time
+# (10/20/2017 - 08/23/2014) - corrected to 10/20/2017 - 10/23/2017.
 MANUAL_DATE_OVERRIDES = {
-    "insurrection conquest": (1508457600, 1508716800),  # 20.10.2017 - 23.10.2017
+    "insurrection conquest": (1508457600, 1508716800),  # 10/20/2017 - 10/23/2017
 }
 
 IMAGE_BASE_URL = "https://cdn.synapsegames.com/unleashed/images/"
@@ -49,7 +49,7 @@ XML_BASE_URL = "https://mobile.tyrantonline.com/assets/"
 WIKI_API_URL = "https://tyrantunleashed.fandom.com/api.php"
 WIKI_IMAGE_BASE_HINT = "https://tyrantunleashed.fandom.com/wiki/"
 
-# (Dateiname, XML-Elementname, Anzeige-Typ, Badge-Farbe)
+# (filename, XML element name, display type, badge color)
 SOURCES = [
     ("faction_wars_fp3.xml", "faction_war", "Guild War", "#8e44ad"),
     ("raids_x42.xml", "raid", "Raid", "#c0392b"),
@@ -58,17 +58,17 @@ SOURCES = [
     ("events.xml", "event", "Main Banner", "#16a085"),
 ]
 
-# Nur zum Nachschlagen von fehlenden Conquest-Bannern per Name genutzt
-# (siehe build_banner_lookup) - events.xml selbst ist jetzt zusaetzlich
-# auch eine vollwertige Timeline-Quelle (s.o.).
+# Only used to look up missing Conquest banners by name (see
+# build_banner_lookup) - events.xml itself is now also a full-fledged
+# timeline source in its own right (see above).
 EVENTS_LOOKUP_FILE = "events.xml"
 
 
 def download_xml_files(target_dir):
-    """Laedt alle Quell-XMLs frisch von tyrantonline.com herunter.
-    Bei Fehlern (kein Netz, 404, ...) bleibt eine bereits vorhandene lokale
-    Datei einfach unangetastet, statt das Skript abzubrechen."""
-    print("0) Lade aktuelle XML-Dateien von tyrantonline.com...")
+    """Downloads all source XMLs fresh from tyrantonline.com.
+    On failure (no network, 404, ...) an already-existing local file is
+    simply left untouched instead of aborting the script."""
+    print("0) Downloading current XML files from tyrantonline.com...")
     filenames = list(dict.fromkeys([s[0] for s in SOURCES] + [EVENTS_LOOKUP_FILE]))
     for filename in filenames:
         url = XML_BASE_URL + filename
@@ -79,19 +79,19 @@ def download_xml_files(target_dir):
                 data = resp.read()
             with open(dest, "wb") as f:
                 f.write(data)
-            print(f"  OK: {filename} ({len(data)} Bytes)")
+            print(f"  OK: {filename} ({len(data)} bytes)")
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
             if os.path.exists(dest):
-                print(f"  [WARNUNG] Download von {filename} fehlgeschlagen ({e}) - nutze vorhandene lokale Datei.")
+                print(f"  [WARNING] Download of {filename} failed ({e}) - using existing local file.")
             else:
-                print(f"  [WARNUNG] Download von {filename} fehlgeschlagen ({e}) - keine lokale Datei vorhanden.")
+                print(f"  [WARNING] Download of {filename} failed ({e}) - no local file available.")
 
 
 def build_banner_lookup(input_dir):
-    """Baut ein Name->web_picture Nachschlage-Woerterbuch aus events.xml.
-    Wird genutzt, um Conquest-Events (die selbst kein web_picture haben)
-    ein Banner zuzuordnen, falls events.xml zufaellig noch eins fuer den
-    passenden Namen enthaelt."""
+    """Builds a name->web_picture lookup dict from events.xml.
+    Used to assign a banner to Conquest events (which have no web_picture
+    of their own) in case events.xml happens to still have one for the
+    matching name."""
     path = os.path.join(input_dir, EVENTS_LOOKUP_FILE)
     lookup = {}
     if not os.path.exists(path):
@@ -120,12 +120,12 @@ def _conquest_name_slug(name):
 
 
 def probe_cdn_banner(name, images_dir):
-    """Probiert, ob ein Conquest-Banner unter der ueblichen Namenskonvention
-    direkt auf dem Spiele-CDN liegt (gleicher Host wie alle anderen Banner) -
-    z.B. 'Glacial Conquest' -> 'glacial_conquest_banner.jpg'. Das ist
-    zuverlaessiger als das Wiki, da es die native Namenskonvention des
-    Spiels selbst ist. Laedt bei Erfolg direkt herunter und gibt den
-    lokalen Dateinamen zurueck, sonst None."""
+    """Tries whether a Conquest banner exists directly on the game CDN
+    under the usual naming convention (same host as all other banners) -
+    e.g. 'Glacial Conquest' -> 'glacial_conquest_banner.jpg'. This is more
+    reliable than the wiki, since it's the game's own native naming
+    convention. Downloads it directly on success and returns the local
+    filename, otherwise None."""
     core = _conquest_name_slug(name)
     candidates = [
         f"{core}_conquest_banner.jpg",
@@ -143,7 +143,7 @@ def probe_cdn_banner(name, images_dir):
                     continue
         except Exception:
             continue
-        # Treffer - jetzt wirklich herunterladen.
+        # Hit - now actually download it.
         dest = os.path.join(images_dir, filename)
         try:
             if not os.path.exists(dest):
@@ -152,12 +152,12 @@ def probe_cdn_banner(name, images_dir):
                     img_data = resp.read()
                 with open(dest, "wb") as f:
                     f.write(img_data)
-                print(f"    [CDN] '{name}': gefunden und heruntergeladen -> {dest}")
+                print(f"    [CDN] '{name}': found and downloaded -> {dest}")
             else:
-                print(f"    [CDN] '{name}': Datei bereits vorhanden -> {dest}")
+                print(f"    [CDN] '{name}': file already exists -> {dest}")
             return filename
         except Exception as e:
-            print(f"    [WARN] CDN-Download fuer '{name}' fehlgeschlagen ({url}): {e}")
+            print(f"    [WARN] CDN download for '{name}' failed ({url}): {e}")
             return None
         finally:
             time.sleep(0.1)
@@ -166,11 +166,11 @@ def probe_cdn_banner(name, images_dir):
 
 
 def _wiki_imageinfo_lookup(filename):
-    """Prueft per MediaWiki 'imageinfo', ob File:<filename> existiert, und
-    gibt bei Erfolg (url, filename) zurueck - sonst (None, None).
-    Das ist das Muster aus find_missing_assets.py, das bereits nachweislich
-    funktioniert hat: exakte Existenzpruefung einer Datei statt Raten,
-    was auf einer Artikelseite verlinkt ist."""
+    """Checks via MediaWiki 'imageinfo' whether File:<filename> exists, and
+    returns (url, filename) on success - otherwise (None, None).
+    This is the pattern from find_missing_assets.py that already proved
+    to work: an exact existence check of a file instead of guessing what's
+    linked on an article page."""
     import json
 
     api_url = (
@@ -184,7 +184,7 @@ def _wiki_imageinfo_lookup(filename):
         pages = data.get("query", {}).get("pages", {})
         for page in pages.values():
             if page.get("pageid", -1) == -1:
-                continue  # Seite existiert nicht
+                continue  # page doesn't exist
             imageinfo = page.get("imageinfo", [])
             if imageinfo:
                 img_url = imageinfo[0].get("url", "")
@@ -196,26 +196,25 @@ def _wiki_imageinfo_lookup(filename):
 
 
 def fetch_wiki_banner(name, images_dir):
-    """Best-Effort-Fallback: sucht ein Banner fuer ein Conquest-Event im
-    offiziellen Fandom-Wiki. Zwei Strategien:
+    """Best-effort fallback: looks for a banner for a Conquest event on the
+    official Fandom wiki. Two strategies:
 
-    1) Direkte Dateinamen-Kandidaten raten (nach dem Muster des bekannten
-       Banners "conquest_acheron_banner.jpg" fuer "Conquest of Acheron")
-       und per imageinfo-API pruefen, ob File:<Kandidat> existiert - das
-       ist das bereits erprobte Muster aus find_missing_assets.py.
-    2) Falls kein Kandidat passt: die Bilder auflisten, die auf der
-       Wiki-Artikelseite mit diesem Namen verwendet werden, und daraus
-       eine jpg/png-Bannerdatei waehlen.
+    1) Guess direct filename candidates (following the pattern of the
+       known banner "conquest_acheron_banner.jpg" for "Conquest of
+       Acheron") and check via the imageinfo API whether File:<candidate>
+       exists - this is the pattern already proven in
+       find_missing_assets.py.
+    2) If no candidate matches: list the images used on the wiki article
+       page with this name, and pick a jpg/png banner file from those.
 
-    In beiden Faellen wird - falls gefunden - ueber Special:FilePath
-    heruntergeladen (liefert das Original-Format, nicht Fandoms
-    automatische webp-Konvertierung). Gibt den lokalen Dateinamen zurueck,
-    oder None bei jedem Fehler - bricht das Skript dabei nicht ab.
-    HINWEIS: ungetestet gegen die echte Wiki-API (kein Netzwerkzugriff bei
-    der Entwicklung dieses Skripts) - bitte einmal pruefen/anpassen."""
+    In both cases, if found, downloads via Special:FilePath (returns the
+    original format, not Fandom's automatic webp conversion). Returns the
+    local filename, or None on any failure - does not abort the script.
+    NOTE: untested against the real wiki API (no network access while
+    developing this script) - please verify/adjust once."""
     import json
 
-    # ── Strategie 1: Dateinamen-Kandidaten raten ────────────────────────
+    # ── Strategy 1: guess filename candidates ───────────────────────────
     # "Conquest of Acheron" -> "acheron" -> "conquest_acheron_banner.jpg"
     # "Ascendant Conquest"  -> "ascendant" -> "conquest_ascendant_banner.jpg"
     #                                      -> "ascendant_conquest_banner.jpg"
@@ -224,7 +223,7 @@ def fetch_wiki_banner(name, images_dir):
     filename_candidates = []
     for pattern in (f"conquest_{core}_banner", f"{core}_conquest_banner", f"conquest_{core}"):
         for ext in (".jpg", ".jpeg", ".png"):
-            cand = pattern[0].upper() + pattern[1:] + ext  # File:-Namen sind gross geschrieben
+            cand = pattern[0].upper() + pattern[1:] + ext  # File: names are capitalized
             if cand not in filename_candidates:
                 filename_candidates.append(cand)
 
@@ -237,11 +236,11 @@ def fetch_wiki_banner(name, images_dir):
         time.sleep(0.1)
 
     if chosen_url:
-        print(f"    [WIKI] '{name}': Strategie 1 Treffer -> {chosen_filename}")
+        print(f"    [WIKI] '{name}': strategy 1 hit -> {chosen_filename}")
 
-    # ── Strategie 2: Fallback - Bilder auf der Artikelseite auflisten ──
-    # "redirects=1" folgt automatisch, falls der Name auf eine andere
-    # Wiki-Seite umleitet (z.B. leicht abweichende Schreibweise).
+    # ── Strategy 2: fallback - list images on the article page ──────────
+    # "redirects=1" automatically follows if the name redirects to another
+    # wiki page (e.g. slightly different spelling).
     if not chosen_url:
         page_title = name.replace(" ", "_")
         api_url = (
@@ -265,65 +264,63 @@ def fetch_wiki_banner(name, images_dir):
             banner_candidates = [c for c in candidates if "banner" in c.lower()]
             fallback_candidate = (banner_candidates or candidates or [None])[0]
             if fallback_candidate:
-                # Auch hier die echte URL per imageinfo holen statt
-                # Special:FilePath zu raten (wird von Fandom mit 403
-                # blockiert).
+                # Here too, fetch the real URL via imageinfo instead of
+                # guessing Special:FilePath (which Fandom blocks with 403).
                 chosen_url, chosen_filename = _wiki_imageinfo_lookup(fallback_candidate)
                 if chosen_url:
-                    print(f"    [WIKI] '{name}': Strategie 2 Treffer -> {chosen_filename}")
+                    print(f"    [WIKI] '{name}': strategy 2 hit -> {chosen_filename}")
                 else:
-                    print(f"    [WIKI] '{name}': Seite existiert={page_exists}, "
-                          f"{len(candidates)} jpg/png auf Seite, aber imageinfo-Lookup fehlgeschlagen")
+                    print(f"    [WIKI] '{name}': page exists={page_exists}, "
+                          f"{len(candidates)} jpg/png on page, but imageinfo lookup failed")
             else:
-                print(f"    [WIKI] '{name}': Seite existiert={page_exists}, "
-                      f"keine jpg/png-Bilder auf der Seite gefunden (Kandidaten Strategie 1: {len(filename_candidates)})")
+                print(f"    [WIKI] '{name}': page exists={page_exists}, "
+                      f"no jpg/png images found on the page (strategy 1 candidates: {len(filename_candidates)})")
         except Exception as e:
-            print(f"    [WARN] Wiki-Fallback fuer '{name}' fehlgeschlagen: {e}")
+            print(f"    [WARN] Wiki fallback for '{name}' failed: {e}")
 
     if not chosen_url or not chosen_filename:
         return None
 
-    # ── Herunterladen ────────────────────────────────────────────────
-    # WICHTIG: die von der imageinfo-API zurueckgelieferte URL direkt
-    # verwenden (das ist bereits die echte CDN-Original-Datei) - NICHT
-    # eine Special:FilePath-URL neu zusammenbauen, die wird von Fandom
-    # mit 403 Forbidden blockiert.
-    # Fandom liefert per Content-Negotiation trotz .jpg/.png-Endung oft
-    # automatisch WebP aus - "&format=original" (bzw. "?format=original",
-    # falls die URL noch keinen Query-String hat) erzwingt das
-    # tatsaechliche Originalformat.
+    # ── Download ─────────────────────────────────────────────────────
+    # IMPORTANT: use the URL returned by the imageinfo API directly (that's
+    # already the real original CDN file) - do NOT rebuild a
+    # Special:FilePath URL, Fandom blocks that with 403 Forbidden.
+    # Fandom often serves WebP automatically via content negotiation
+    # despite the .jpg/.png extension - "&format=original" (or
+    # "?format=original" if the URL has no query string yet) forces the
+    # actual original format.
     separator = "&" if "?" in chosen_url else "?"
     download_url = f"{chosen_url}{separator}format=original"
 
     try:
-        # Leerzeichen und andere problematische Zeichen im Dateinamen
-        # durch Unterstriche ersetzen (manche alten Wiki-Dateien haben
-        # noch echte Leerzeichen im Namen, z.B. "Harbinger war banner b.jpg" -
-        # das kann beim Verlinken in der HTML Probleme machen).
+        # Replace spaces and other problematic characters in the filename
+        # with underscores (some old wiki files still have real spaces in
+        # the name, e.g. "Harbinger war banner b.jpg" - that can cause
+        # problems when linking it in the HTML).
         safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", chosen_filename)
         local_filename = "wiki_" + safe_filename
         dest = os.path.join(images_dir, local_filename)
         if os.path.exists(dest):
-            print(f"    [WIKI] '{name}': Datei bereits vorhanden -> {dest}")
+            print(f"    [WIKI] '{name}': file already exists -> {dest}")
             return local_filename
         img_req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(img_req, timeout=20) as resp:
             img_data = resp.read()
             content_type = resp.headers.get("Content-Type", "")
         if "webp" in content_type.lower():
-            print(f"    [WARN] '{chosen_filename}' kam trotzdem als WebP zurueck (Content-Type: {content_type}) - uebersprungen.")
+            print(f"    [WARN] '{chosen_filename}' still came back as WebP (Content-Type: {content_type}) - skipped.")
             return None
         with open(dest, "wb") as f:
             f.write(img_data)
-        print(f"    [WIKI] '{name}': heruntergeladen ({len(img_data)} Bytes) -> {dest}")
+        print(f"    [WIKI] '{name}': downloaded ({len(img_data)} bytes) -> {dest}")
         return local_filename
     except Exception as e:
-        print(f"    [WARN] Download fuer '{name}' fehlgeschlagen ({download_url}): {e}")
+        print(f"    [WARN] Download for '{name}' failed ({download_url}): {e}")
         return None
 
 
 def parse_events(input_dir, scrape_wiki=False, images_dir=None):
-    """Liest alle Quell-XMLs und liefert eine Liste von dicts."""
+    """Reads all source XMLs and returns a list of dicts."""
     events = []
     banner_lookup = build_banner_lookup(input_dir)
     wiki_hits, wiki_misses = 0, 0
@@ -332,18 +329,18 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
     for filename, tag, type_label, color in SOURCES:
         path = os.path.join(input_dir, filename)
         if not os.path.exists(path):
-            print(f"  [WARNUNG] Datei nicht gefunden, wird uebersprungen: {path}")
+            print(f"  [WARNING] File not found, skipping: {path}")
             continue
 
         try:
             tree = ET.parse(path)
         except ET.ParseError as e:
-            print(f"  [FEHLER] Konnte {filename} nicht parsen: {e}")
+            print(f"  [ERROR] Could not parse {filename}: {e}")
             continue
 
         root = tree.getroot()
         elements = root.findall(tag)
-        print(f"  {filename}: {len(elements)} <{tag}>-Eintraege gefunden")
+        print(f"  {filename}: {len(elements)} <{tag}> entries found")
 
         for el in elements:
             name = (el.findtext("name") or "").strip()
@@ -352,18 +349,17 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             desc = (el.findtext("desc") or "").strip()
             web_picture = (el.findtext("web_picture") or "").strip()
 
-            # Platzhalter-/Test-Eintraege ohne echtes Datum ueberspringen
+            # Skip placeholder/test entries without a real date
             if not name or name.upper() == "UNUSED":
                 continue
-            # "Conquest of Acheron" & Co. stehen sowohl in conquest.xml
-            # (als Conquest) als auch in events.xml (als Story Event) -
-            # hier den Story-Event-Eintrag ueberspringen, da die
-            # Conquest-Variante bereits weiter oben erfasst wurde.
+            # "Conquest of Acheron" & Co. appear both in conquest.xml (as
+            # Conquest) and in events.xml (as Main Banner) - skip the
+            # Main Banner entry here since the Conquest variant was
+            # already captured above.
             if type_label == "Main Banner" and name.lower() in conquest_names_seen:
                 continue
-            # "Gold Bonus"-Mini-Events hatten nie ein Banner (bestaetigt) -
-            # werden komplett ignoriert statt als "No banner" gelistet zu
-            # werden.
+            # "Gold Bonus" mini-events never had a banner (confirmed) -
+            # ignored entirely instead of being listed as "No banner".
             if type_label == "Main Banner" and "gold bonus" in name.lower():
                 continue
             try:
@@ -371,39 +367,39 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
                 end_time = int(end_raw) if end_raw else start_time
             except ValueError:
                 continue
-            # Manuelle Korrektur bekannter Datenfehler (siehe
-            # MANUAL_DATE_OVERRIDES oben) - z.B. Insurrection Conquest,
-            # wo end_time im Original vor start_time lag.
+            # Manual correction of known data errors (see
+            # MANUAL_DATE_OVERRIDES above) - e.g. Insurrection Conquest,
+            # where end_time was originally before start_time.
             if name.lower() in MANUAL_DATE_OVERRIDES:
                 start_time, end_time = MANUAL_DATE_OVERRIDES[name.lower()]
-            # "...Guild Brawl"/"...Placements"-Eintraege sind meist
-            # eintaegige Vorlauf-Runden direkt vor dem eigentlichen Guild
-            # War (identisches Banner, keine inhaltliche Ergaenzung) -
-            # aber NICHT alle "Guild Brawl"-Eintraege sind das: viele sind
-            # eigenstaendige 3-taegige Brawls und sollen bleiben. Deshalb
-            # nur ueber die Dauer filtern (< 1.5 Tage = Vorlauf-Runde),
-            # nicht ueber den Namen allein.
+            # "...Guild Brawl"/"...Placements" entries are usually
+            # one-day lead-in rounds right before the actual Guild War
+            # (identical banner, no additional content) - but NOT all
+            # "Guild Brawl" entries are that: many are standalone 3-day
+            # brawls and should stay. So filter only by duration
+            # (< 1.5 days = lead-in round), not by name alone.
             duration_days = (end_time - start_time) / 86400
             if type_label == "Brawl" and duration_days < 1.5 and (
                 name.lower().endswith("guild brawl") or name.lower().endswith("placements")
             ):
                 continue
-            # Manche Eintraege (z.B. "Null Conquest", oder Vorab-Dubletten
-            # wie eine zweite "Harbinger Conquest" mit start_time=1/end_time=2
-            # - die echten Werte stehen dann nur im XML-Kommentar) sind
-            # Platzhalter/Entwuerfe ohne echtes Datum. Alles vor dem Jahr
-            # 2001 (Unix-Timestamp < 1000000000) ist garantiert kein
-            # echtes Spiel-Event (das Spiel existiert erst seit 2012/2013)
-            # und wird deshalb ignoriert.
+            # Some entries (e.g. "Null Conquest", or draft duplicates like
+            # a second "Harbinger Conquest" with start_time=1/end_time=2 -
+            # the real values are then only in the XML comment) are
+            # placeholders/drafts without a real date. Anything before the
+            # year 2001 (Unix timestamp < 1000000000) is guaranteed not a
+            # real game event (the game has only existed since 2012/2013)
+            # and is therefore ignored.
             if start_time < 1_000_000_000:
                 continue
 
-            # Conquest-Events haben selbst kein web_picture im XML - erst
-            # in events.xml nachschlagen (meist veraltet/leer, da die
-            # Datei ueberschrieben wird), dann direkt auf dem Spiele-CDN
-            # nach der ueblichen Namenskonvention suchen (zuverlaessiger als
-            # das Wiki, da native Namenskonvention), erst danach optional
-            # im Fandom-Wiki als letzter Fallback.
+            # Conquest events have no web_picture of their own in the XML -
+            # first look it up in events.xml (usually outdated/empty,
+            # since the file gets overwritten), then search directly on
+            # the game CDN using the usual naming convention (more
+            # reliable than the wiki, since it's the native naming
+            # convention), and only then optionally fall back to the
+            # Fandom wiki as a last resort.
             if not web_picture and type_label == "Conquest":
                 web_picture = banner_lookup.get(name.lower(), "")
                 if not web_picture and images_dir:
@@ -431,22 +427,87 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
                     "web_picture": web_picture,
                     "start_time": start_time,
                     "end_time": end_time,
+                    "sub_items": None,  # optionally filled by group_generic_banners()
                 }
             )
 
     if scrape_wiki:
-        print(f"  Wiki-Banner-Lookup: {wiki_hits} gefunden, {wiki_misses} nicht gefunden")
+        print(f"  Wiki banner lookup: {wiki_hits} found, {wiki_misses} not found")
 
     events.sort(key=lambda e: e["start_time"])
+    events = group_generic_banners(events)
     return events
 
 
+def group_generic_banners(events, min_group_size=4):
+    """Collapses events that share a single (generically reused) banner
+    with many other events of the same type into ONE card: image shown
+    once, all names+dates listed below as a compact list.
+    The priority is the image first, dates second - a long chain of
+    almost identical cards with the same generic banner (e.g.
+    "generic_brawl_banner.jpg" or "war_banner_long.jpg" from 2019 onward)
+    adds no visual value otherwise.
+    Grouped per (type, web_picture) combination, only if at least
+    min_group_size events share the same banner - a single or few reuses
+    (e.g. Guild Brawl phases) remain normal individual cards."""
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for e in events:
+        # Only group Brawl and Guild War - that's where reuse of a single
+        # generic banner from 2019 onward was the reported issue.
+        # Raids, for example, should stay individually visible.
+        if e["web_picture"] and e["type"] in ("Brawl", "Guild War"):
+            groups[(e["type"], e["web_picture"])].append(e)
+
+    to_collapse = {key for key, group in groups.items() if len(group) >= min_group_size}
+    if not to_collapse:
+        return events
+
+    result = []
+    group_cards = []
+    seen_keys = set()
+    for e in events:
+        key = (e["type"], e["web_picture"])
+        if key not in to_collapse:
+            result.append(e)
+            continue
+        if key in seen_keys:
+            continue  # already inserted as a group
+        seen_keys.add(key)
+        group = groups[key]
+        group_sorted = sorted(group, key=lambda x: x["start_time"])
+        group_cards.append(
+            {
+                "id": "",
+                "type": group_sorted[0]["type"],
+                "color": group_sorted[0]["color"],
+                "name": f"{len(group_sorted)}\u00d7 {group_sorted[0]['type']} (same banner)",
+                "desc": "",
+                "web_picture": key[1],
+                "start_time": group_sorted[0]["start_time"],
+                "end_time": group_sorted[-1]["end_time"],
+                "sub_items": [
+                    (g["name"], g["start_time"], g["end_time"]) for g in group_sorted
+                ],
+            }
+        )
+
+    # Regular events stay chronologically sorted; grouped "same banner"
+    # cards are always appended at the very end of the timeline instead of
+    # being interleaved by date, sorted among themselves by their earliest
+    # date.
+    result.sort(key=lambda e: e["start_time"])
+    group_cards.sort(key=lambda e: e["start_time"])
+    return result + group_cards
+
+
 def download_images(events, images_dir, delay=0.05):
-    """Laedt alle referenzierten web_picture-Dateien herunter (Cache-Verhalten)."""
+    """Downloads all referenced web_picture files (cache behavior)."""
     os.makedirs(images_dir, exist_ok=True)
 
     filenames = sorted({e["web_picture"] for e in events if e["web_picture"]})
-    print(f"\n  {len(filenames)} eindeutige Bilder zu pruefen/laden...")
+    print(f"\n  {len(filenames)} unique images to check/download...")
 
     ok, failed, skipped = 0, 0, 0
     failed_files = []
@@ -472,15 +533,15 @@ def download_images(events, images_dir, delay=0.05):
             time.sleep(delay)
 
         if i % 25 == 0 or i == len(filenames):
-            print(f"    ... {i}/{len(filenames)} verarbeitet (neu: {ok}, vorhanden: {skipped}, fehlgeschlagen: {failed})")
+            print(f"    ... {i}/{len(filenames)} processed (new: {ok}, existing: {skipped}, failed: {failed})")
 
-    print(f"\n  Bild-Download fertig: {ok} neu geladen, {skipped} bereits vorhanden, {failed} fehlgeschlagen.")
+    print(f"\n  Image download done: {ok} newly downloaded, {skipped} already present, {failed} failed.")
     if failed_files:
-        print("  Fehlgeschlagene Bilder (Timeline zeigt fuer diese einen Platzhalter):")
+        print("  Failed images (timeline shows a placeholder for these):")
         for fn, err in failed_files[:20]:
             print(f"    - {fn}: {err}")
         if len(failed_files) > 20:
-            print(f"    ... und {len(failed_files) - 20} weitere")
+            print(f"    ... and {len(failed_files) - 20} more")
 
     return {f for f in filenames if os.path.exists(os.path.join(images_dir, f)) and os.path.getsize(os.path.join(images_dir, f)) > 0}
 
@@ -494,9 +555,9 @@ def build_html(events, available_images, images_relpath="images"):
     for e in events:
         img_ok = e["web_picture"] and e["web_picture"] in available_images
         if img_ok:
-            # urllib.parse.quote sorgt dafuer, dass Leerzeichen/Sonderzeichen
-            # in Dateinamen (z.B. von manchen Wiki-Bildern) eine gueltige
-            # URL ergeben, statt die src stillschweigend kaputtzumachen.
+            # urllib.parse.quote makes sure spaces/special characters in
+            # filenames (e.g. from some wiki images) result in a valid
+            # URL, instead of silently breaking the src.
             img_src = images_relpath + "/" + urllib.parse.quote(e["web_picture"])
             img_html = f'<img src="{html.escape(img_src)}" alt="{html.escape(e["name"])}" loading="lazy">'
         else:
@@ -505,7 +566,21 @@ def build_html(events, available_images, images_relpath="images"):
         filename_label = f'<span class="filename-tag">{html.escape(e["web_picture"])}</span>' if e["web_picture"] else ""
         desc_html = f'<p class="desc">{html.escape(e["desc"])}</p>' if e["desc"] else ""
 
-        search_blob = html.escape((e["name"] + " " + e["desc"]).lower())
+        if e.get("sub_items"):
+            # Grouped card: dates as a compact, scrollable list instead of
+            # a single date range (the image takes priority).
+            sub_rows = "\n".join(
+                f'<li><span class="sub-name">{html.escape(n)}</span>'
+                f'<span class="sub-dates">{fmt_date(st)} &ndash; {fmt_date(et)}</span></li>'
+                for n, st, et in e["sub_items"]
+            )
+            dates_html = f'<ul class="sub-list">{sub_rows}</ul>'
+        else:
+            dates_html = f'<div class="dates">{fmt_date(e["start_time"])} &ndash; {fmt_date(e["end_time"])}</div>'
+
+        search_blob = html.escape(
+            (e["name"] + " " + e["desc"] + " " + " ".join(n for n, _, _ in (e.get("sub_items") or []))).lower()
+        )
         rows.append(f"""
         <div class="event" data-type="{html.escape(e['type'])}" data-search="{search_blob}">
           <div class="event-marker" style="background:{e['color']}"></div>
@@ -515,7 +590,7 @@ def build_html(events, available_images, images_relpath="images"):
               {filename_label}
               <span class="badge" style="background:{e['color']}">{html.escape(e['type'])}</span>
               <h2>{html.escape(e['name'])}</h2>
-              <div class="dates">{fmt_date(e['start_time'])} &ndash; {fmt_date(e['end_time'])}</div>
+              {dates_html}
               {desc_html}
             </div>
           </div>
@@ -528,7 +603,7 @@ def build_html(events, available_images, images_relpath="images"):
     )
 
     return f"""<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -685,6 +760,24 @@ def build_html(events, available_images, images_relpath="images"):
     font-size: 0.8rem;
     margin-bottom: 8px;
   }}
+  .sub-list {{
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }}
+  .sub-list li {{
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    border-bottom: 1px solid var(--border);
+  }}
+  .sub-list li:last-child {{ border-bottom: none; }}
+  .sub-name {{ color: #cfd4da; }}
+  .sub-dates {{ color: var(--muted); white-space: nowrap; }}
   .desc {{
     font-size: 0.9rem;
     line-height: 1.4;
@@ -698,16 +791,16 @@ def build_html(events, available_images, images_relpath="images"):
   <h1>Tyrant Unleashed &ndash; History Timeline</h1>
   <div class="subtitle">{len(events)} Events</div>
   <div class="controls">
-    <input type="text" class="search-box" id="search" placeholder="Suchen...">
+    <input type="text" class="search-box" id="search" placeholder="Search...">
     <div class="filters">
-      <button class="filter-btn active" data-filter="all">Alle</button>
+      <button class="filter-btn active" data-filter="all">All</button>
       {filter_buttons}
     </div>
   </div>
   <div class="timeline">
     {''.join(rows)}
   </div>
-  <div class="no-results" id="no-results">Keine Treffer.</div>
+  <div class="no-results" id="no-results">No results.</div>
 
 <script>
   const buttons = document.querySelectorAll('.filter-btn');
@@ -719,9 +812,9 @@ def build_html(events, available_images, images_relpath="images"):
     const activeFilters = Array.from(document.querySelectorAll('.filter-btn.active'))
       .map(b => b.dataset.filter);
     const showAll = activeFilters.includes('all') || activeFilters.length === 0;
-    // Suche pro Wort: jedes eingegebene Wort muss irgendwo im Text
-    // vorkommen (egal an welcher Stelle, egal in welcher Reihenfolge) -
-    // "Acheron" findet "Conquest of Acheron" genauso wie "Acheron Conquest".
+    // Word-based search: every word entered must appear somewhere in the
+    // text (regardless of position or order) -
+    // "Acheron" finds "Conquest of Acheron" just as well as "Acheron Conquest".
     const queryWords = searchBox.value.trim().toLowerCase().split(/\\s+/).filter(Boolean);
 
     let visibleCount = 0;
@@ -739,8 +832,8 @@ def build_html(events, available_images, images_relpath="images"):
 
   buttons.forEach(btn => {{
     btn.addEventListener('click', () => {{
-      // Single-Select: der geklickte Button ist der einzige aktive -
-      // Klick auf "Brawl" zeigt NUR Brawls, nicht Brawl+bisherige Auswahl.
+      // Single-select: the clicked button is the only active one -
+      // clicking "Brawl" shows ONLY Brawls, not Brawl + previous selection.
       buttons.forEach(b => b.classList.toggle('active', b === btn));
       applyFilters();
     }});
@@ -756,31 +849,31 @@ def build_html(events, available_images, images_relpath="images"):
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    parser = argparse.ArgumentParser(description="Erzeugt die TU History Timeline (HTML) aus den XML-Dateien.")
-    parser.add_argument("--input", default=script_dir, help="Ordner mit den drei XML-Dateien (Standard: Ordner des Skripts)")
-    parser.add_argument("--output", default=os.path.join(script_dir, "timeline.html"), help="Ziel-HTML-Datei (Standard: timeline.html neben dem Skript)")
-    parser.add_argument("--images-dir", default="images", help="Ordner fuer heruntergeladene Bilder (Standard: images)")
-    parser.add_argument("--no-download", action="store_true", help="Bild-Download ueberspringen (nur HTML neu bauen)")
-    parser.add_argument("--no-xml-download", action="store_true", help="Kein erneutes Herunterladen der XML-Dateien - vorhandene lokale Dateien verwenden")
-    parser.add_argument("--scrape-wiki", action="store_true", help="Fuer Conquest-Events ohne Banner: Fallback-Suche im offiziellen Fandom-Wiki (best effort)")
+    parser = argparse.ArgumentParser(description="Generates the TU History Timeline (HTML) from the XML files.")
+    parser.add_argument("--input", default=script_dir, help="Folder with the source XML files (default: script's own folder)")
+    parser.add_argument("--output", default=os.path.join(script_dir, "timeline.html"), help="Target HTML file (default: timeline.html next to the script)")
+    parser.add_argument("--images-dir", default="images", help="Folder for downloaded images (default: images)")
+    parser.add_argument("--no-download", action="store_true", help="Skip image download (only rebuild the HTML)")
+    parser.add_argument("--no-xml-download", action="store_true", help="Don't re-download the XML files - use existing local files")
+    parser.add_argument("--scrape-wiki", action="store_true", help="For Conquest events without a banner: fallback search on the official Fandom wiki (best effort)")
     args = parser.parse_args()
 
-    print(f"Arbeitsordner (Skript-Speicherort): {args.input}")
+    print(f"Working folder (script location): {args.input}")
 
     if not args.no_xml_download:
         download_xml_files(args.input)
     else:
-        print("0) XML-Download uebersprungen (--no-xml-download)")
+        print("0) XML download skipped (--no-xml-download)")
 
     images_dir = os.path.join(os.path.dirname(os.path.abspath(args.output)) or ".", args.images_dir)
     os.makedirs(images_dir, exist_ok=True)
 
-    print("1) Lese XML-Dateien ein...")
+    print("1) Reading XML files...")
     events = parse_events(args.input, scrape_wiki=args.scrape_wiki, images_dir=images_dir)
-    print(f"  -> {len(events)} gueltige Events insgesamt (chronologisch sortiert)")
+    print(f"  -> {len(events)} valid events in total (sorted chronologically)")
 
     if not events:
-        print("Keine Events gefunden - Abbruch.")
+        print("No events found - aborting.")
         sys.exit(1)
 
     if args.no_download:
@@ -788,26 +881,26 @@ def main():
             f for f in {e["web_picture"] for e in events if e["web_picture"]}
             if os.path.exists(os.path.join(images_dir, f))
         }
-        print("\n3) Bild-Download uebersprungen (--no-download)")
+        print("\n3) Image download skipped (--no-download)")
     else:
-        print("\n3) Lade Bilder herunter...")
+        print("\n3) Downloading images...")
         available = download_images(events, images_dir)
 
-    print("\n4) Erzeuge HTML-Timeline...")
+    print("\n4) Generating HTML timeline...")
     html_out = build_html(events, available, images_relpath=args.images_dir)
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(html_out)
 
-    print(f"\nFertig! -> {args.output}")
-    print(f"Bilder liegen in: {os.path.abspath(images_dir)}")
+    print(f"\nDone! -> {args.output}")
+    print(f"Images are located in: {os.path.abspath(images_dir)}")
 
-    # ── Uebersicht: welche Events haben (noch) kein Banner? ────────────
+    # ── Overview: which events (still) have no banner? ─────────────────
     missing = [
         e for e in events
         if not (e["web_picture"] and e["web_picture"] in available)
     ]
     print(f"\n{'='*60}")
-    print(f"Events ohne Banner: {len(missing)} von {len(events)}")
+    print(f"Events without a banner: {len(missing)} of {len(events)}")
     if missing:
         by_type = {}
         for e in missing:
@@ -818,14 +911,14 @@ def main():
             for e in group:
                 print(f"    - {e['name']} ({fmt_date(e['start_time'])} - {fmt_date(e['end_time'])})")
     else:
-        print("  Alle Events haben ein Banner.")
+        print("  All events have a banner.")
 
 
 if __name__ == "__main__":
-    # Wenn das Skript per Doppelklick gestartet wird (kein PowerShell/Terminal
-    # drumherum), schliesst sich das Konsolenfenster sonst sofort wieder -
-    # egal ob alles geklappt hat oder ein Fehler aufgetreten ist. Deshalb hier
-    # ein Fehler-Catch mit Traceback und am Ende immer eine Pause.
+    # If the script is started by double-clicking (no PowerShell/terminal
+    # around it), the console window otherwise closes again immediately -
+    # regardless of whether everything worked or an error occurred. Hence
+    # an error catch with traceback here, and always a pause at the end.
     exit_code = 0
     try:
         main()
@@ -838,17 +931,17 @@ if __name__ == "__main__":
     finally:
         print("\n----------------------------------------")
         if exit_code == 0:
-            print("Fertig. Fenster kann geschlossen werden.")
+            print("Done. You can close this window.")
         else:
-            print("Es ist ein Fehler aufgetreten (siehe oben).")
+            print("An error occurred (see above).")
         if os.name == "nt":
-            # Nativer Windows-Befehl statt input() - haengt zuverlaessig an
-            # der Konsole, auch wenn stdin bei einem per Doppelklick
-            # gestarteten Prozess nicht sauber verbunden ist.
+            # Native Windows command instead of input() - reliably attaches
+            # to the console, even if stdin isn't properly connected for a
+            # process started via double-click.
             os.system("pause")
         else:
             try:
-                input("Enter druecken zum Beenden...")
+                input("Press Enter to exit...")
             except EOFError:
                 pass
         sys.exit(exit_code)
