@@ -237,7 +237,12 @@ def fetch_wiki_banner(name, images_dir):
     download_url = f"{chosen_url}{separator}format=original"
 
     try:
-        local_filename = "wiki_" + chosen_filename
+        # Leerzeichen und andere problematische Zeichen im Dateinamen
+        # durch Unterstriche ersetzen (manche alten Wiki-Dateien haben
+        # noch echte Leerzeichen im Namen, z.B. "Harbinger war banner b.jpg" -
+        # das kann beim Verlinken in der HTML Probleme machen).
+        safe_filename = re.sub(r"[^A-Za-z0-9._-]+", "_", chosen_filename)
+        local_filename = "wiki_" + safe_filename
         dest = os.path.join(images_dir, local_filename)
         if os.path.exists(dest):
             print(f"    [WIKI] '{name}': Datei bereits vorhanden -> {dest}")
@@ -406,7 +411,11 @@ def build_html(events, available_images, images_relpath="images"):
     for e in events:
         img_ok = e["web_picture"] and e["web_picture"] in available_images
         if img_ok:
-            img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">'
+            # urllib.parse.quote sorgt dafuer, dass Leerzeichen/Sonderzeichen
+            # in Dateinamen (z.B. von manchen Wiki-Bildern) eine gueltige
+            # URL ergeben, statt die src stillschweigend kaputtzumachen.
+            img_src = images_relpath + "/" + urllib.parse.quote(e["web_picture"])
+            img_html = f'<img src="{html.escape(img_src)}" alt="{html.escape(e["name"])}" loading="lazy">'
         else:
             img_html = '<div class="no-image">No banner</div>'
 
