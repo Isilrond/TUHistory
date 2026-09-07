@@ -42,6 +42,12 @@ from datetime import datetime, timezone
 # (10/20/2017 - 08/23/2014) - corrected to 10/20/2017 - 10/23/2017.
 MANUAL_DATE_OVERRIDES = {
     "insurrection conquest": (1508457600, 1508716800),  # 10/20/2017 - 10/23/2017
+    # "Harvest Box": end_time (11/20/2013) was before start_time
+    # (12/10/2013) in the source data - a stale leftover value. Based on
+    # the surrounding entries (Cyber Box ends 12/04, Pantheon Box starts
+    # 12/18, and boxes of this era run about 7 days), corrected to
+    # 12/10/2013 - 12/17/2013.
+    "harvest box": (1386698400, 1387303200),  # 12/10/2013 - 12/17/2013
 }
 
 IMAGE_BASE_URL = "https://cdn.synapsegames.com/unleashed/images/"
@@ -350,6 +356,11 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             start_raw = (el.findtext("start_time") or "").strip()
             end_raw = (el.findtext("end_time") or "").strip()
             desc = (el.findtext("desc") or "").strip()
+            # Event Box descriptions are just generic placeholder text
+            # ("This is a description.", etc.) with no real information -
+            # dropped entirely.
+            if type_label == "Event Box":
+                desc = ""
             web_picture = (el.findtext(banner_tag) or "").strip()
 
             # Skip placeholder/test entries without a real date
@@ -457,10 +468,10 @@ def group_generic_banners(events, min_group_size=4):
 
     groups = defaultdict(list)
     for e in events:
-        # Only group Brawl and Guild War - that's where reuse of a single
-        # generic banner from 2019 onward was the reported issue.
-        # Raids, for example, should stay individually visible.
-        if e["web_picture"] and e["type"] in ("Brawl", "Guild War"):
+        # Group Brawl, Guild War, and Event Box - that's where reuse of a
+        # single generic banner across many entries was the reported
+        # issue. Raids, for example, should stay individually visible.
+        if e["web_picture"] and e["type"] in ("Brawl", "Guild War", "Event Box"):
             groups[(e["type"], e["web_picture"])].append(e)
 
     to_collapse = {key for key, group in groups.items() if len(group) >= min_group_size}
