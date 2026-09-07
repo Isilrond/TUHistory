@@ -355,11 +355,6 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             # Platzhalter-/Test-Eintraege ohne echtes Datum ueberspringen
             if not name or name.upper() == "UNUSED":
                 continue
-            # "Guild Brawl"-Eintraege sind Duplikate, die dem eigentlichen
-            # Guild War direkt vorausgehen (identisches Banner, keine
-            # inhaltliche Ergaenzung) - werden ignoriert.
-            if type_label == "Brawl" and name.lower().endswith("guild brawl"):
-                continue
             # "Conquest of Acheron" & Co. stehen sowohl in conquest.xml
             # (als Conquest) als auch in events.xml (als Story Event) -
             # hier den Story-Event-Eintrag ueberspringen, da die
@@ -381,6 +376,18 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             # wo end_time im Original vor start_time lag.
             if name.lower() in MANUAL_DATE_OVERRIDES:
                 start_time, end_time = MANUAL_DATE_OVERRIDES[name.lower()]
+            # "...Guild Brawl"/"...Placements"-Eintraege sind meist
+            # eintaegige Vorlauf-Runden direkt vor dem eigentlichen Guild
+            # War (identisches Banner, keine inhaltliche Ergaenzung) -
+            # aber NICHT alle "Guild Brawl"-Eintraege sind das: viele sind
+            # eigenstaendige 3-taegige Brawls und sollen bleiben. Deshalb
+            # nur ueber die Dauer filtern (< 1.5 Tage = Vorlauf-Runde),
+            # nicht ueber den Namen allein.
+            duration_days = (end_time - start_time) / 86400
+            if type_label == "Brawl" and duration_days < 1.5 and (
+                name.lower().endswith("guild brawl") or name.lower().endswith("placements")
+            ):
+                continue
             # Manche Eintraege (z.B. "Null Conquest", oder Vorab-Dubletten
             # wie eine zweite "Harbinger Conquest" mit start_time=1/end_time=2
             # - die echten Werte stehen dann nur im XML-Kommentar) sind
