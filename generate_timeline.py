@@ -172,12 +172,12 @@ def build_html(events, available_images, images_relpath="images"):
     rows = []
     for e in events:
         img_ok = e["web_picture"] and e["web_picture"] in available_images
-        filename_label = f'<span class="filename-tag">{html.escape(e["web_picture"])}</span>' if e["web_picture"] else ""
         if img_ok:
-            img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">{filename_label}'
+            img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">'
         else:
-            img_html = f'<div class="no-image">Kein Bild</div>{filename_label}'
+            img_html = '<div class="no-image">Kein Bild</div>'
 
+        filename_label = f'<span class="filename-tag">{html.escape(e["web_picture"])}</span>' if e["web_picture"] else ""
         desc_html = f'<p class="desc">{html.escape(e["desc"])}</p>' if e["desc"] else ""
 
         search_blob = html.escape((e["name"] + " " + e["desc"]).lower())
@@ -187,6 +187,7 @@ def build_html(events, available_images, images_relpath="images"):
           <div class="event-card">
             <div class="event-image">{img_html}</div>
             <div class="event-body">
+              {filename_label}
               <span class="badge" style="background:{e['color']}">{html.escape(e['type'])}</span>
               <h2>{html.escape(e['name'])}</h2>
               <div class="dates">{fmt_date(e['start_time'])} &ndash; {fmt_date(e['end_time'])}</div>
@@ -316,7 +317,6 @@ def build_html(events, available_images, images_relpath="images"):
     display: flex;
     align-items: center;
     justify-content: center;
-    position: relative;
   }}
   .event-image img {{
     width: 100%;
@@ -324,25 +324,23 @@ def build_html(events, available_images, images_relpath="images"):
     object-fit: contain;
     display: block;
   }}
-  .filename-tag {{
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    background: rgba(0, 0, 0, 0.7);
-    color: #fff;
-    font-size: 0.65rem;
-    font-family: "Courier New", monospace;
-    padding: 2px 6px;
-    border-radius: 4px;
-    pointer-events: none;
-  }}
   .no-image {{
     color: var(--muted);
     font-size: 0.8rem;
     padding: 16px;
   }}
   .event-body {{
+    position: relative;
     padding: 14px 18px;
+  }}
+  .filename-tag {{
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    color: var(--muted);
+    font-size: 0.65rem;
+    font-family: "Courier New", monospace;
+    pointer-events: none;
   }}
   .badge {{
     display: inline-block;
