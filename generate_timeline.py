@@ -26,6 +26,7 @@ Bild. Das Skript bricht dabei nicht ab.
 import argparse
 import html
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -98,6 +99,64 @@ def build_banner_lookup(input_dir):
     return lookup
 
 
+def _conquest_name_slug(name):
+    """'Conquest of Acheron' -> 'acheron'; 'Ascendant Conquest' -> 'ascendant'."""
+    lower = name.lower()
+    core = re.sub(r"^conquest of\s+", "", lower)
+    core = re.sub(r"\s+conquest$", "", core)
+    core = re.sub(r"[^a-z0-9]+", "_", core).strip("_")
+    if not core:
+        core = re.sub(r"[^a-z0-9]+", "_", lower).strip("_")
+    return core
+
+
+def probe_cdn_banner(name, images_dir):
+    """Probiert, ob ein Conquest-Banner unter der ueblichen Namenskonvention
+    direkt auf dem Spiele-CDN liegt (gleicher Host wie alle anderen Banner) -
+    z.B. 'Glacial Conquest' -> 'glacial_conquest_banner.jpg'. Das ist
+    zuverlaessiger als das Wiki, da es die native Namenskonvention des
+    Spiels selbst ist. Laedt bei Erfolg direkt herunter und gibt den
+    lokalen Dateinamen zurueck, sonst None."""
+    core = _conquest_name_slug(name)
+    candidates = [
+        f"{core}_conquest_banner.jpg",
+        f"conquest_{core}_banner.jpg",
+        f"{core}_conquest_banner.png",
+        f"conquest_{core}_banner.png",
+    ]
+
+    for filename in candidates:
+        url = IMAGE_BASE_URL + filename
+        try:
+            req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    continue
+        except Exception:
+            continue
+
+        # Treffer - jetzt wirklich herunterladen.
+        dest = os.path.join(images_dir, filename)
+        try:
+            if not os.path.exists(dest):
+                img_req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(img_req, timeout=20) as resp:
+                    img_data = resp.read()
+                with open(dest, "wb") as f:
+                    f.write(img_data)
+                print(f"    [CDN] '{name}': gefunden und heruntergeladen -> {dest}")
+            else:
+                print(f"    [CDN] '{name}': Datei bereits vorhanden -> {dest}")
+            return filename
+        except Exception as e:
+            print(f"    [WARN] CDN-Download fuer '{name}' fehlgeschlagen ({url}): {e}")
+            return None
+        finally:
+            time.sleep(0.1)
+
+    return None
+
+
 def _wiki_imageinfo_lookup(filename):
     """Prueft per MediaWiki 'imageinfo', ob File:<filename> existiert, und
     gibt bei Erfolg (url, filename) zurueck - sonst (None, None).
@@ -147,20 +206,12 @@ def fetch_wiki_banner(name, images_dir):
     HINWEIS: ungetestet gegen die echte Wiki-API (kein Netzwerkzugriff bei
     der Entwicklung dieses Skripts) - bitte einmal pruefen/anpassen."""
     import json
-    import re
 
     # ── Strategie 1: Dateinamen-Kandidaten raten ────────────────────────
     # "Conquest of Acheron" -> "acheron" -> "conquest_acheron_banner.jpg"
     # "Ascendant Conquest"  -> "ascendant" -> "conquest_ascendant_banner.jpg"
     #                                      -> "ascendant_conquest_banner.jpg"
-    lower = name.lower()
-    core = re.sub(r"^conquest of\s+", "", lower)
-    core = re.sub(r"\s+conquest$", "", core)
-    core = re.sub(r"[^a-z0-9]+", "_", core).strip("_")
-    if not core:
-        # Falls das Namensmuster gar nicht passt (Edge-Case): kompletten
-        # Namen als Slug nehmen, statt gar keinen Kandidaten zu erzeugen.
-        core = re.sub(r"[^a-z0-9]+", "_", lower).strip("_")
+    core = _conquest_name_slug(name)
 
     filename_candidates = []
     for pattern in (f"conquest_{core}_banner", f"{core}_conquest_banner", f"conquest_{core}"):
@@ -324,9 +375,16 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
 
             # Conquest-Events haben selbst kein web_picture im XML - erst
             # in events.xml nachschlagen (meist veraltet/leer, da die
-            # Datei ueberschrieben wird), dann optional im Fandom-Wiki.
+            # Datei ueberschrieben wird), dann direkt auf dem Spiele-CDN
+            # nach der ueblichen Namenskonvention suchen (zuverlaessiger als
+            # das Wiki, da native Namenskonvention), erst danach optional
+            # im Fandom-Wiki als letzter Fallback.
             if not web_picture and type_label == "Conquest":
                 web_picture = banner_lookup.get(name.lower(), "")
+                if not web_picture and images_dir:
+                    found = probe_cdn_banner(name, images_dir)
+                    if found:
+                        web_picture = found
                 if not web_picture and scrape_wiki and images_dir:
                     found = fetch_wiki_banner(name, images_dir)
                     if found:
