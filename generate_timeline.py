@@ -49,13 +49,16 @@ XML_BASE_URL = "https://mobile.tyrantonline.com/assets/"
 WIKI_API_URL = "https://tyrantunleashed.fandom.com/api.php"
 WIKI_IMAGE_BASE_HINT = "https://tyrantunleashed.fandom.com/wiki/"
 
-# (filename, XML element name, display type, badge color)
+# (filename, XML element name, display type, badge color, banner tag name)
+# The banner tag name defaults to "web_picture"; event_box.xml uses
+# "web_banner" instead, so it's specified per source.
 SOURCES = [
-    ("faction_wars_fp3.xml", "faction_war", "Guild War", "#8e44ad"),
-    ("raids_x42.xml", "raid", "Raid", "#c0392b"),
-    ("battle_events_h52.xml", "battle_event", "Brawl", "#2980b9"),
-    ("conquest.xml", "conquest_event", "Conquest", "#e67e22"),
-    ("events.xml", "event", "Main Banner", "#16a085"),
+    ("faction_wars_fp3.xml", "faction_war", "Guild War", "#8e44ad", "web_picture"),
+    ("raids_x42.xml", "raid", "Raid", "#c0392b", "web_picture"),
+    ("battle_events_h52.xml", "battle_event", "Brawl", "#2980b9", "web_picture"),
+    ("conquest.xml", "conquest_event", "Conquest", "#e67e22", "web_picture"),
+    ("events.xml", "event", "Main Banner", "#16a085", "web_picture"),
+    ("event_box.xml", "event_box", "Event Box", "#f39c12", "web_banner"),
 ]
 
 # Only used to look up missing Conquest banners by name (see
@@ -326,7 +329,7 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
     wiki_hits, wiki_misses = 0, 0
     conquest_names_seen = set()
 
-    for filename, tag, type_label, color in SOURCES:
+    for filename, tag, type_label, color, banner_tag in SOURCES:
         path = os.path.join(input_dir, filename)
         if not os.path.exists(path):
             print(f"  [WARNING] File not found, skipping: {path}")
@@ -347,7 +350,7 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             start_raw = (el.findtext("start_time") or "").strip()
             end_raw = (el.findtext("end_time") or "").strip()
             desc = (el.findtext("desc") or "").strip()
-            web_picture = (el.findtext("web_picture") or "").strip()
+            web_picture = (el.findtext(banner_tag) or "").strip()
 
             # Skip placeholder/test entries without a real date
             if not name or name.upper() == "UNUSED":
