@@ -29,27 +29,38 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 IMAGE_BASE_URL = "https://cdn.synapsegames.com/unleashed/images/"
 XML_BASE_URL = "https://mobile.tyrantonline.com/assets/"
+WIKI_API_URL = "https://tyrantunleashed.fandom.com/api.php"
+WIKI_IMAGE_BASE_HINT = "https://tyrantunleashed.fandom.com/wiki/"
 
 # (Dateiname, XML-Elementname, Anzeige-Typ, Badge-Farbe)
 SOURCES = [
     ("faction_wars_fp3.xml", "faction_war", "Guild War", "#8e44ad"),
     ("raids_x42.xml", "raid", "Raid", "#c0392b"),
     ("battle_events_h52.xml", "battle_event", "Brawl", "#2980b9"),
+    ("conquest.xml", "conquest_event", "Conquest", "#e67e22"),
+    ("events.xml", "event", "Main Banner", "#16a085"),
 ]
+
+# Nur zum Nachschlagen von fehlenden Conquest-Bannern per Name genutzt
+# (siehe build_banner_lookup) - events.xml selbst ist jetzt zusaetzlich
+# auch eine vollwertige Timeline-Quelle (s.o.).
+EVENTS_LOOKUP_FILE = "events.xml"
 
 
 def download_xml_files(target_dir):
-    """Laedt die drei Quell-XMLs frisch von tyrantonline.com herunter.
+    """Laedt alle Quell-XMLs frisch von tyrantonline.com herunter.
     Bei Fehlern (kein Netz, 404, ...) bleibt eine bereits vorhandene lokale
     Datei einfach unangetastet, statt das Skript abzubrechen."""
     print("0) Lade aktuelle XML-Dateien von tyrantonline.com...")
-    for filename, _tag, _label, _color in SOURCES:
+    filenames = list(dict.fromkeys([s[0] for s in SOURCES] + [EVENTS_LOOKUP_FILE]))
+    for filename in filenames:
         url = XML_BASE_URL + filename
         dest = os.path.join(target_dir, filename)
         try:
@@ -66,9 +77,194 @@ def download_xml_files(target_dir):
                 print(f"  [WARNUNG] Download von {filename} fehlgeschlagen ({e}) - keine lokale Datei vorhanden.")
 
 
-def parse_events(input_dir):
-    """Liest alle drei XML-Dateien und liefert eine Liste von dicts."""
+def build_banner_lookup(input_dir):
+    """Baut ein Name->web_picture Nachschlage-Woerterbuch aus events.xml.
+    Wird genutzt, um Conquest-Events (die selbst kein web_picture haben)
+    ein Banner zuzuordnen, falls events.xml zufaellig noch eins fuer den
+    passenden Namen enthaelt."""
+    path = os.path.join(input_dir, EVENTS_LOOKUP_FILE)
+    lookup = {}
+    if not os.path.exists(path):
+        return lookup
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return lookup
+    for el in tree.getroot().findall("event"):
+        name = (el.findtext("name") or "").strip()
+        web_picture = (el.findtext("web_picture") or "").strip()
+        if name and web_picture:
+            lookup[name.lower()] = web_picture
+    return lookup
+
+
+def _wiki_imageinfo_lookup(filename):
+    """Prueft per MediaWiki 'imageinfo', ob File:<filename> existiert, und
+    gibt bei Erfolg (url, filename) zurueck - sonst (None, None).
+    Das ist das Muster aus find_missing_assets.py, das bereits nachweislich
+    funktioniert hat: exakte Existenzpruefung einer Datei statt Raten,
+    was auf einer Artikelseite verlinkt ist."""
+    import json
+
+    api_url = (
+        f"{WIKI_API_URL}?action=query&titles={urllib.parse.quote('File:' + filename)}"
+        f"&prop=imageinfo&iiprop=url&format=json"
+    )
+    try:
+        req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        pages = data.get("query", {}).get("pages", {})
+        for page in pages.values():
+            if page.get("pageid", -1) == -1:
+                continue  # Seite existiert nicht
+            imageinfo = page.get("imageinfo", [])
+            if imageinfo:
+                img_url = imageinfo[0].get("url", "")
+                if img_url:
+                    return img_url, filename
+    except Exception:
+        pass
+    return None, None
+
+
+def fetch_wiki_banner(name, images_dir):
+    """Best-Effort-Fallback: sucht ein Banner fuer ein Conquest-Event im
+    offiziellen Fandom-Wiki. Zwei Strategien:
+
+    1) Direkte Dateinamen-Kandidaten raten (nach dem Muster des bekannten
+       Banners "conquest_acheron_banner.jpg" fuer "Conquest of Acheron")
+       und per imageinfo-API pruefen, ob File:<Kandidat> existiert - das
+       ist das bereits erprobte Muster aus find_missing_assets.py.
+    2) Falls kein Kandidat passt: die Bilder auflisten, die auf der
+       Wiki-Artikelseite mit diesem Namen verwendet werden, und daraus
+       eine jpg/png-Bannerdatei waehlen.
+
+    In beiden Faellen wird - falls gefunden - ueber Special:FilePath
+    heruntergeladen (liefert das Original-Format, nicht Fandoms
+    automatische webp-Konvertierung). Gibt den lokalen Dateinamen zurueck,
+    oder None bei jedem Fehler - bricht das Skript dabei nicht ab.
+    HINWEIS: ungetestet gegen die echte Wiki-API (kein Netzwerkzugriff bei
+    der Entwicklung dieses Skripts) - bitte einmal pruefen/anpassen."""
+    import json
+    import re
+
+    # ── Strategie 1: Dateinamen-Kandidaten raten ────────────────────────
+    # "Conquest of Acheron" -> "acheron" -> "conquest_acheron_banner.jpg"
+    # "Ascendant Conquest"  -> "ascendant" -> "conquest_ascendant_banner.jpg"
+    #                                      -> "ascendant_conquest_banner.jpg"
+    lower = name.lower()
+    core = re.sub(r"^conquest of\s+", "", lower)
+    core = re.sub(r"\s+conquest$", "", core)
+    core = re.sub(r"[^a-z0-9]+", "_", core).strip("_")
+    if not core:
+        # Falls das Namensmuster gar nicht passt (Edge-Case): kompletten
+        # Namen als Slug nehmen, statt gar keinen Kandidaten zu erzeugen.
+        core = re.sub(r"[^a-z0-9]+", "_", lower).strip("_")
+
+    filename_candidates = []
+    for pattern in (f"conquest_{core}_banner", f"{core}_conquest_banner", f"conquest_{core}"):
+        for ext in (".jpg", ".jpeg", ".png"):
+            cand = pattern[0].upper() + pattern[1:] + ext  # File:-Namen sind gross geschrieben
+            if cand not in filename_candidates:
+                filename_candidates.append(cand)
+
+    chosen_url, chosen_filename = None, None
+    for cand in filename_candidates:
+        url, fname = _wiki_imageinfo_lookup(cand)
+        if url:
+            chosen_url, chosen_filename = url, fname
+            break
+        time.sleep(0.1)
+
+    if chosen_url:
+        print(f"    [WIKI] '{name}': Strategie 1 Treffer -> {chosen_filename}")
+
+    # ── Strategie 2: Fallback - Bilder auf der Artikelseite auflisten ──
+    # "redirects=1" folgt automatisch, falls der Name auf eine andere
+    # Wiki-Seite umleitet (z.B. leicht abweichende Schreibweise).
+    if not chosen_url:
+        page_title = name.replace(" ", "_")
+        api_url = (
+            f"{WIKI_API_URL}?action=query&titles={urllib.parse.quote(page_title)}"
+            f"&prop=images&imlimit=50&redirects=1&format=json"
+        )
+        try:
+            req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            pages = data.get("query", {}).get("pages", {})
+            page_exists = any(p.get("pageid", -1) != -1 for p in pages.values())
+            candidates = []
+            for page in pages.values():
+                for img in page.get("images", []):
+                    title = img.get("title", "")
+                    fname = title.split(":", 1)[-1] if ":" in title else title
+                    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+                    if ext in ("jpg", "jpeg", "png"):
+                        candidates.append(fname)
+            banner_candidates = [c for c in candidates if "banner" in c.lower()]
+            fallback_candidate = (banner_candidates or candidates or [None])[0]
+            if fallback_candidate:
+                # Auch hier die echte URL per imageinfo holen statt
+                # Special:FilePath zu raten (wird von Fandom mit 403
+                # blockiert).
+                chosen_url, chosen_filename = _wiki_imageinfo_lookup(fallback_candidate)
+                if chosen_url:
+                    print(f"    [WIKI] '{name}': Strategie 2 Treffer -> {chosen_filename}")
+                else:
+                    print(f"    [WIKI] '{name}': Seite existiert={page_exists}, "
+                          f"{len(candidates)} jpg/png auf Seite, aber imageinfo-Lookup fehlgeschlagen")
+            else:
+                print(f"    [WIKI] '{name}': Seite existiert={page_exists}, "
+                      f"keine jpg/png-Bilder auf der Seite gefunden (Kandidaten Strategie 1: {len(filename_candidates)})")
+        except Exception as e:
+            print(f"    [WARN] Wiki-Fallback fuer '{name}' fehlgeschlagen: {e}")
+
+    if not chosen_url or not chosen_filename:
+        return None
+
+    # ── Herunterladen ────────────────────────────────────────────────
+    # WICHTIG: die von der imageinfo-API zurueckgelieferte URL direkt
+    # verwenden (das ist bereits die echte CDN-Original-Datei) - NICHT
+    # eine Special:FilePath-URL neu zusammenbauen, die wird von Fandom
+    # mit 403 Forbidden blockiert.
+    # Fandom liefert per Content-Negotiation trotz .jpg/.png-Endung oft
+    # automatisch WebP aus - "&format=original" (bzw. "?format=original",
+    # falls die URL noch keinen Query-String hat) erzwingt das
+    # tatsaechliche Originalformat.
+    separator = "&" if "?" in chosen_url else "?"
+    download_url = f"{chosen_url}{separator}format=original"
+
+    try:
+        local_filename = "wiki_" + chosen_filename
+        dest = os.path.join(images_dir, local_filename)
+        if os.path.exists(dest):
+            print(f"    [WIKI] '{name}': Datei bereits vorhanden -> {dest}")
+            return local_filename
+        img_req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(img_req, timeout=20) as resp:
+            img_data = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+        if "webp" in content_type.lower():
+            print(f"    [WARN] '{chosen_filename}' kam trotzdem als WebP zurueck (Content-Type: {content_type}) - uebersprungen.")
+            return None
+        with open(dest, "wb") as f:
+            f.write(img_data)
+        print(f"    [WIKI] '{name}': heruntergeladen ({len(img_data)} Bytes) -> {dest}")
+        return local_filename
+    except Exception as e:
+        print(f"    [WARN] Download fuer '{name}' fehlgeschlagen ({download_url}): {e}")
+        return None
+
+
+def parse_events(input_dir, scrape_wiki=False, images_dir=None):
+    """Liest alle Quell-XMLs und liefert eine Liste von dicts."""
     events = []
+    banner_lookup = build_banner_lookup(input_dir)
+    wiki_hits, wiki_misses = 0, 0
+    conquest_names_seen = set()
+
     for filename, tag, type_label, color in SOURCES:
         path = os.path.join(input_dir, filename)
         if not os.path.exists(path):
@@ -100,13 +296,42 @@ def parse_events(input_dir):
             # inhaltliche Ergaenzung) - werden ignoriert.
             if type_label == "Brawl" and name.lower().endswith("guild brawl"):
                 continue
+            # "Conquest of Acheron" & Co. stehen sowohl in conquest.xml
+            # (als Conquest) als auch in events.xml (als Story Event) -
+            # hier den Story-Event-Eintrag ueberspringen, da die
+            # Conquest-Variante bereits weiter oben erfasst wurde.
+            if type_label == "Main Banner" and name.lower() in conquest_names_seen:
+                continue
             try:
                 start_time = int(start_raw)
                 end_time = int(end_raw) if end_raw else start_time
             except ValueError:
                 continue
-            if start_time <= 0:
+            # Manche Eintraege (z.B. "Null Conquest", oder Vorab-Dubletten
+            # wie eine zweite "Harbinger Conquest" mit start_time=1/end_time=2
+            # - die echten Werte stehen dann nur im XML-Kommentar) sind
+            # Platzhalter/Entwuerfe ohne echtes Datum. Alles vor dem Jahr
+            # 2001 (Unix-Timestamp < 1000000000) ist garantiert kein
+            # echtes Spiel-Event (das Spiel existiert erst seit 2012/2013)
+            # und wird deshalb ignoriert.
+            if start_time < 1_000_000_000:
                 continue
+
+            # Conquest-Events haben selbst kein web_picture im XML - erst
+            # in events.xml nachschlagen (meist veraltet/leer, da die
+            # Datei ueberschrieben wird), dann optional im Fandom-Wiki.
+            if not web_picture and type_label == "Conquest":
+                web_picture = banner_lookup.get(name.lower(), "")
+                if not web_picture and scrape_wiki and images_dir:
+                    found = fetch_wiki_banner(name, images_dir)
+                    if found:
+                        web_picture = found
+                        wiki_hits += 1
+                    else:
+                        wiki_misses += 1
+
+            if type_label == "Conquest":
+                conquest_names_seen.add(name.lower())
 
             events.append(
                 {
@@ -120,6 +345,9 @@ def parse_events(input_dir):
                     "end_time": end_time,
                 }
             )
+
+    if scrape_wiki:
+        print(f"  Wiki-Banner-Lookup: {wiki_hits} gefunden, {wiki_misses} nicht gefunden")
 
     events.sort(key=lambda e: e["start_time"])
     return events
@@ -180,7 +408,7 @@ def build_html(events, available_images, images_relpath="images"):
         if img_ok:
             img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">'
         else:
-            img_html = '<div class="no-image">Kein Bild</div>'
+            img_html = '<div class="no-image">No banner</div>'
 
         filename_label = f'<span class="filename-tag">{html.escape(e["web_picture"])}</span>' if e["web_picture"] else ""
         desc_html = f'<p class="desc">{html.escape(e["desc"])}</p>' if e["desc"] else ""
@@ -399,13 +627,17 @@ def build_html(events, available_images, images_relpath="images"):
     const activeFilters = Array.from(document.querySelectorAll('.filter-btn.active'))
       .map(b => b.dataset.filter);
     const showAll = activeFilters.includes('all') || activeFilters.length === 0;
-    const query = searchBox.value.trim().toLowerCase();
+    // Suche pro Wort: jedes eingegebene Wort muss irgendwo im Text
+    // vorkommen (egal an welcher Stelle, egal in welcher Reihenfolge) -
+    // "Acheron" findet "Conquest of Acheron" genauso wie "Acheron Conquest".
+    const queryWords = searchBox.value.trim().toLowerCase().split(/\\s+/).filter(Boolean);
 
     let visibleCount = 0;
     eventsEls.forEach(ev => {{
       const type = ev.dataset.type;
       const matchesType = showAll || activeFilters.includes(type);
-      const matchesSearch = !query || ev.dataset.search.includes(query);
+      const matchesSearch = queryWords.length === 0 ||
+        queryWords.every(word => ev.dataset.search.includes(word));
       const visible = matchesType && matchesSearch;
       ev.classList.toggle('hidden', !visible);
       if (visible) visibleCount++;
@@ -415,13 +647,9 @@ def build_html(events, available_images, images_relpath="images"):
 
   buttons.forEach(btn => {{
     btn.addEventListener('click', () => {{
-      const filter = btn.dataset.filter;
-      if (filter === 'all') {{
-        buttons.forEach(b => b.classList.toggle('active', b.dataset.filter === 'all'));
-      }} else {{
-        document.querySelector('[data-filter="all"]').classList.remove('active');
-        btn.classList.toggle('active');
-      }}
+      // Single-Select: der geklickte Button ist der einzige aktive -
+      // Klick auf "Brawl" zeigt NUR Brawls, nicht Brawl+bisherige Auswahl.
+      buttons.forEach(b => b.classList.toggle('active', b === btn));
       applyFilters();
     }});
   }});
@@ -442,6 +670,7 @@ def main():
     parser.add_argument("--images-dir", default="images", help="Ordner fuer heruntergeladene Bilder (Standard: images)")
     parser.add_argument("--no-download", action="store_true", help="Bild-Download ueberspringen (nur HTML neu bauen)")
     parser.add_argument("--no-xml-download", action="store_true", help="Kein erneutes Herunterladen der XML-Dateien - vorhandene lokale Dateien verwenden")
+    parser.add_argument("--scrape-wiki", action="store_true", help="Fuer Conquest-Events ohne Banner: Fallback-Suche im offiziellen Fandom-Wiki (best effort)")
     args = parser.parse_args()
 
     print(f"Arbeitsordner (Skript-Speicherort): {args.input}")
@@ -451,15 +680,17 @@ def main():
     else:
         print("0) XML-Download uebersprungen (--no-xml-download)")
 
+    images_dir = os.path.join(os.path.dirname(os.path.abspath(args.output)) or ".", args.images_dir)
+    os.makedirs(images_dir, exist_ok=True)
+
     print("1) Lese XML-Dateien ein...")
-    events = parse_events(args.input)
+    events = parse_events(args.input, scrape_wiki=args.scrape_wiki, images_dir=images_dir)
     print(f"  -> {len(events)} gueltige Events insgesamt (chronologisch sortiert)")
 
     if not events:
         print("Keine Events gefunden - Abbruch.")
         sys.exit(1)
 
-    images_dir = os.path.join(os.path.dirname(os.path.abspath(args.output)) or ".", args.images_dir)
     if args.no_download:
         available = {
             f for f in {e["web_picture"] for e in events if e["web_picture"]}
@@ -476,7 +707,7 @@ def main():
         f.write(html_out)
 
     print(f"\nFertig! -> {args.output}")
-    print(f"Bilder liegen in: {images_dir}")
+    print(f"Bilder liegen in: {os.path.abspath(images_dir)}")
 
 
 if __name__ == "__main__":
