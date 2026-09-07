@@ -34,6 +34,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 IMAGE_BASE_URL = "https://cdn.synapsegames.com/unleashed/images/"
+XML_BASE_URL = "https://mobile.tyrantonline.com/assets/"
 
 # (Dateiname, XML-Elementname, Anzeige-Typ, Badge-Farbe)
 SOURCES = [
@@ -41,6 +42,28 @@ SOURCES = [
     ("raids_x42.xml", "raid", "Raid", "#c0392b"),
     ("battle_events_h52.xml", "battle_event", "Brawl", "#2980b9"),
 ]
+
+
+def download_xml_files(target_dir):
+    """Laedt die drei Quell-XMLs frisch von tyrantonline.com herunter.
+    Bei Fehlern (kein Netz, 404, ...) bleibt eine bereits vorhandene lokale
+    Datei einfach unangetastet, statt das Skript abzubrechen."""
+    print("0) Lade aktuelle XML-Dateien von tyrantonline.com...")
+    for filename, _tag, _label, _color in SOURCES:
+        url = XML_BASE_URL + filename
+        dest = os.path.join(target_dir, filename)
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = resp.read()
+            with open(dest, "wb") as f:
+                f.write(data)
+            print(f"  OK: {filename} ({len(data)} Bytes)")
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            if os.path.exists(dest):
+                print(f"  [WARNUNG] Download von {filename} fehlgeschlagen ({e}) - nutze vorhandene lokale Datei.")
+            else:
+                print(f"  [WARNUNG] Download von {filename} fehlgeschlagen ({e}) - keine lokale Datei vorhanden.")
 
 
 def parse_events(input_dir):
@@ -149,10 +172,11 @@ def build_html(events, available_images, images_relpath="images"):
     rows = []
     for e in events:
         img_ok = e["web_picture"] and e["web_picture"] in available_images
+        filename_label = f'<span class="filename-tag">{html.escape(e["web_picture"])}</span>' if e["web_picture"] else ""
         if img_ok:
-            img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">'
+            img_html = f'<img src="{html.escape(images_relpath + "/" + e["web_picture"])}" alt="{html.escape(e["name"])}" loading="lazy">{filename_label}'
         else:
-            img_html = '<div class="no-image">Kein Bild</div>'
+            img_html = f'<div class="no-image">Kein Bild</div>{filename_label}'
 
         desc_html = f'<p class="desc">{html.escape(e["desc"])}</p>' if e["desc"] else ""
 
@@ -292,12 +316,25 @@ def build_html(events, available_images, images_relpath="images"):
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
   }}
   .event-image img {{
     width: 100%;
     height: auto;
     object-fit: contain;
     display: block;
+  }}
+  .filename-tag {{
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 0.65rem;
+    font-family: "Courier New", monospace;
+    padding: 2px 6px;
+    border-radius: 4px;
+    pointer-events: none;
   }}
   .no-image {{
     color: var(--muted);
@@ -394,12 +431,22 @@ def build_html(events, available_images, images_relpath="images"):
 
 
 def main():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
     parser = argparse.ArgumentParser(description="Erzeugt die TU History Timeline (HTML) aus den XML-Dateien.")
-    parser.add_argument("--input", default=".", help="Ordner mit den drei XML-Dateien (Standard: aktueller Ordner)")
-    parser.add_argument("--output", default="timeline.html", help="Ziel-HTML-Datei (Standard: timeline.html)")
+    parser.add_argument("--input", default=script_dir, help="Ordner mit den drei XML-Dateien (Standard: Ordner des Skripts)")
+    parser.add_argument("--output", default=os.path.join(script_dir, "timeline.html"), help="Ziel-HTML-Datei (Standard: timeline.html neben dem Skript)")
     parser.add_argument("--images-dir", default="images", help="Ordner fuer heruntergeladene Bilder (Standard: images)")
     parser.add_argument("--no-download", action="store_true", help="Bild-Download ueberspringen (nur HTML neu bauen)")
+    parser.add_argument("--no-xml-download", action="store_true", help="Kein erneutes Herunterladen der XML-Dateien - vorhandene lokale Dateien verwenden")
     args = parser.parse_args()
+
+    print(f"Arbeitsordner (Skript-Speicherort): {args.input}")
+
+    if not args.no_xml_download:
+        download_xml_files(args.input)
+    else:
+        print("0) XML-Download uebersprungen (--no-xml-download)")
 
     print("1) Lese XML-Dateien ein...")
     events = parse_events(args.input)
@@ -415,12 +462,12 @@ def main():
             f for f in {e["web_picture"] for e in events if e["web_picture"]}
             if os.path.exists(os.path.join(images_dir, f))
         }
-        print("\n2) Bild-Download uebersprungen (--no-download)")
+        print("\n3) Bild-Download uebersprungen (--no-download)")
     else:
-        print("\n2) Lade Bilder herunter...")
+        print("\n3) Lade Bilder herunter...")
         available = download_images(events, images_dir)
 
-    print("\n3) Erzeuge HTML-Timeline...")
+    print("\n4) Erzeuge HTML-Timeline...")
     html_out = build_html(events, available, images_relpath=args.images_dir)
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(html_out)
@@ -430,4 +477,33 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Wenn das Skript per Doppelklick gestartet wird (kein PowerShell/Terminal
+    # drumherum), schliesst sich das Konsolenfenster sonst sofort wieder -
+    # egal ob alles geklappt hat oder ein Fehler aufgetreten ist. Deshalb hier
+    # ein Fehler-Catch mit Traceback und am Ende immer eine Pause.
+    exit_code = 0
+    try:
+        main()
+    except SystemExit as e:
+        exit_code = e.code if isinstance(e.code, int) else 1
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        exit_code = 1
+    finally:
+        print("\n----------------------------------------")
+        if exit_code == 0:
+            print("Fertig. Fenster kann geschlossen werden.")
+        else:
+            print("Es ist ein Fehler aufgetreten (siehe oben).")
+        if os.name == "nt":
+            # Nativer Windows-Befehl statt input() - haengt zuverlaessig an
+            # der Konsole, auch wenn stdin bei einem per Doppelklick
+            # gestarteten Prozess nicht sauber verbunden ist.
+            os.system("pause")
+        else:
+            try:
+                input("Enter druecken zum Beenden...")
+            except EOFError:
+                pass
+        sys.exit(exit_code)
