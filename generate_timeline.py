@@ -35,6 +35,15 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
+# Manuelle Korrekturen fuer bekannte Datenfehler in den Quell-XMLs (falsche
+# start_time/end_time). Key = Name (exakt wie im XML, Gross-/Kleinschreibung
+# egal), Value = (start_time, end_time) als Unix-Timestamp.
+# "Insurrection Conquest": end_time lag im Original VOR start_time
+# (20.10.2017 - 23.08.2014) - korrigiert auf 20.10.2017 - 23.10.2017.
+MANUAL_DATE_OVERRIDES = {
+    "insurrection conquest": (1508457600, 1508716800),  # 20.10.2017 - 23.10.2017
+}
+
 IMAGE_BASE_URL = "https://cdn.synapsegames.com/unleashed/images/"
 XML_BASE_URL = "https://mobile.tyrantonline.com/assets/"
 WIKI_API_URL = "https://tyrantunleashed.fandom.com/api.php"
@@ -134,7 +143,6 @@ def probe_cdn_banner(name, images_dir):
                     continue
         except Exception:
             continue
-
         # Treffer - jetzt wirklich herunterladen.
         dest = os.path.join(images_dir, filename)
         try:
@@ -358,11 +366,21 @@ def parse_events(input_dir, scrape_wiki=False, images_dir=None):
             # Conquest-Variante bereits weiter oben erfasst wurde.
             if type_label == "Main Banner" and name.lower() in conquest_names_seen:
                 continue
+            # "Gold Bonus"-Mini-Events hatten nie ein Banner (bestaetigt) -
+            # werden komplett ignoriert statt als "No banner" gelistet zu
+            # werden.
+            if type_label == "Main Banner" and "gold bonus" in name.lower():
+                continue
             try:
                 start_time = int(start_raw)
                 end_time = int(end_raw) if end_raw else start_time
             except ValueError:
                 continue
+            # Manuelle Korrektur bekannter Datenfehler (siehe
+            # MANUAL_DATE_OVERRIDES oben) - z.B. Insurrection Conquest,
+            # wo end_time im Original vor start_time lag.
+            if name.lower() in MANUAL_DATE_OVERRIDES:
+                start_time, end_time = MANUAL_DATE_OVERRIDES[name.lower()]
             # Manche Eintraege (z.B. "Null Conquest", oder Vorab-Dubletten
             # wie eine zweite "Harbinger Conquest" mit start_time=1/end_time=2
             # - die echten Werte stehen dann nur im XML-Kommentar) sind
@@ -775,6 +793,25 @@ def main():
 
     print(f"\nFertig! -> {args.output}")
     print(f"Bilder liegen in: {os.path.abspath(images_dir)}")
+
+    # ── Uebersicht: welche Events haben (noch) kein Banner? ────────────
+    missing = [
+        e for e in events
+        if not (e["web_picture"] and e["web_picture"] in available)
+    ]
+    print(f"\n{'='*60}")
+    print(f"Events ohne Banner: {len(missing)} von {len(events)}")
+    if missing:
+        by_type = {}
+        for e in missing:
+            by_type.setdefault(e["type"], []).append(e)
+        for type_label in sorted(by_type):
+            group = by_type[type_label]
+            print(f"\n  {type_label} ({len(group)}):")
+            for e in group:
+                print(f"    - {e['name']} ({fmt_date(e['start_time'])} - {fmt_date(e['end_time'])})")
+    else:
+        print("  Alle Events haben ein Banner.")
 
 
 if __name__ == "__main__":
