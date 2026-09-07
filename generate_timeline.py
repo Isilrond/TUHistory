@@ -95,6 +95,11 @@ def parse_events(input_dir):
             # Platzhalter-/Test-Eintraege ohne echtes Datum ueberspringen
             if not name or name.upper() == "UNUSED":
                 continue
+            # "Guild Brawl"-Eintraege sind Duplikate, die dem eigentlichen
+            # Guild War direkt vorausgehen (identisches Banner, keine
+            # inhaltliche Ergaenzung) - werden ignoriert.
+            if type_label == "Brawl" and name.lower().endswith("guild brawl"):
+                continue
             try:
                 start_time = int(start_raw)
                 end_time = int(end_raw) if end_raw else start_time
